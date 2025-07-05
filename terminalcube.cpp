@@ -1,10 +1,54 @@
 #include <array>
-#include <algorithm>
-#include "glm/glm.hpp"
 #include "glm/gtc/matrix_transform.hpp"
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <thread>
+
+#ifdef _WIN32
 #include <conio.h>
+#define platform_kbhit _kbhit
+#define platform_getch _getch
+#endif
+
+#ifdef __linux__
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+void enableRawMode() {
+    termios term;
+    tcgetattr(STDIN_FILENO, &term);
+    term.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+}
+
+void disableRawMode() {
+    termios term;
+    tcgetattr(STDIN_FILENO, &term);
+    term.c_lflag |= (ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+}
+
+bool linux_kbhit() {
+    timeval tv = {0L, 0L};
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    return select(STDIN_FILENO+1, &fds, NULL, NULL, &tv) > 0;
+}
+
+char linux_getch() {
+    char ch = 0;
+    if (read(STDIN_FILENO, &ch, 1) < 0) return 0;
+    return ch;
+}
+
+#define platform_kbhit linux_kbhit
+#define platform_getch linux_getch
+#endif
 
 std::array<std::array<char, 128>, 64> screen;
 
@@ -101,13 +145,18 @@ void drawLine(int x1, int y1, int x2, int y2) {
 }
 
 int main() {
+
+  #ifdef __linux__
+    enableRawMode();
+  #endif
+
 	//Main Loop
 	std::cout << "\x1b[32m";
 	float angle = 0.0f;
-
+  std::cout << "\x1b[?25l";
 	while (true) {
-		if (_kbhit()) {
-			char c = _getch();
+		if (platform_kbhit()) {
+			char c = platform_getch();
 			if (c == 'a') cam.cameraPos += 0.5f * glm::normalize(glm::cross(cam.cameraUp, cam.cameraFront));
 			if (c == 'd') cam.cameraPos -= 0.5f * glm::normalize(glm::cross(cam.cameraUp, cam.cameraFront));
 			if (c == 'w') cam.cameraPos += cam.cameraFront;
@@ -122,9 +171,7 @@ int main() {
 		clear();
 		cam.updateRotation();
 		glm::mat4 view = glm::lookAt(cam.cameraPos, cam.cameraPos + cam.cameraFront, cam.cameraUp);
-		std::cout  << "\x1b[?25l";
-		std::cout << "\x1b[H";
-		angle += 5.0f;
+	angle += 5.0f;
 		glm::mat4 model = glm::mat4(1.0f);
 		model = glm::rotate(model, glm::radians(angle), glm::vec3(0.0f, 1.0f, 1.0f));
 		glm::mat4 mvp = perspective * view * model;
@@ -161,10 +208,19 @@ int main() {
 			}
 		}
 
+		std::cout  << "\x1b[2J";
+		std::cout << "\x1b[H";
 		draw();
+    std::cout << std::flush;
+    std::this_thread::sleep_for(std::chrono::milliseconds(33));
 	}
+
+  #ifdef __linux__
+    disableRawMode();
+  #endif
 	return 0;
 }
+
 
 void Camera::updateRotation()
 {
@@ -180,5 +236,5 @@ void Camera::updateRotation()
 	direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
 	direction.y = sin(glm::radians(pitch));
 	direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-	cameraFront = direction;
+	cameraFront = glm::normalize(direction);
 }
